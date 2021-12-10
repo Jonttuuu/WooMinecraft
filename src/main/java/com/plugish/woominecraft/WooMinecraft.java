@@ -11,15 +11,18 @@ package com.plugish.woominecraft;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.inject.Inject;
+import com.moandjiezana.toml.Toml;
 import com.plugish.woominecraft.pojo.Order;
 import com.plugish.woominecraft.pojo.WMCPojo;
 import com.plugish.woominecraft.pojo.WMCProcessedOrders;
+import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.proxy.ProxyServer;
+
+import org.slf4j.Logger;
+
 import okhttp3.*;
-import org.bukkit.Bukkit;
-import org.bukkit.configuration.file.YamlConfiguration;
-import org.bukkit.entity.Player;
-import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitScheduler;
 
 import java.io.BufferedReader;
 import java.io.FileNotFoundException;
@@ -27,65 +30,58 @@ import java.io.InputStreamReader;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
-public final class WooMinecraft extends JavaPlugin {
+public final class WooMinecraft {
 
 	static WooMinecraft instance;
 
-	private YamlConfiguration l10n;
+	private final ProxyServer server;
+	private final Logger logger;
+	private Toml config;
 
-	@Override
-	public void onEnable() {
+	public ProxyServer getServer() {
+		return this.server;
+	}
+
+	public Logger getLogger() {
+		return this.logger;
+	}
+
+	public Toml getConfig() {
+		return this.config;
+	}
+
+	@Inject
+	public WooMinecraft(final ProxyServer server, final Logger logger) {
 		instance = this;
-		YamlConfiguration config = (YamlConfiguration) getConfig();
+		this.server = server;
+		this.logger = logger;
+	}
 
-		// Save the default config.yml
-		try{
-			saveDefaultConfig();
-		} catch ( IllegalArgumentException e ) {
-			getLogger().warning( e.getMessage() );
-		}
-
-		String lang = getConfig().getString("lang");
-		if ( lang == null ) {
-			getLogger().warning( "No default l10n set, setting to english." );
-		}
+	@Subscribe
+	public void onProxyInitialize(final ProxyInitializeEvent event) {
+		this.config = new Config().loadDefaultConfig().getToml();
 
 		// Load the commands.
-		getCommand( "woo" ).setExecutor( new WooCommand() );
-
-		// Log when plugin is initialized.
-		getLogger().info( this.getLang( "log.com_init" ));
+		getServer().getCommandManager().register(
+			getServer().getCommandManager()
+			.metaBuilder( "woocheck" )
+			.build(),
+			new WooCommand()
+		);
 
 		// Setup the scheduler
-		BukkitRunner scheduler = new BukkitRunner(instance);
-		scheduler.runTaskTimerAsynchronously( instance, config.getInt( "update_interval" ) * 20, config.getInt( "update_interval" ) * 20 );
-
-		// Log when plugin is fully enabled ( setup complete ).
-		getLogger().info( this.getLang( "log.enabled" ) );
-	}
-
-	@Override
-	public void onDisable() {
-		// Log when the plugin is fully shut down.
-		getLogger().info( this.getLang( "log.com_init" ) );
-	}
-
-	/**
-	 * Helper method to get localized strings
-	 *
-	 * Much better than typing this.l10n.getString...
-	 * @param path Path to the config var
-	 * @return String
-	 */
-	String getLang(String path) {
-		if ( null == this.l10n ) {
-
-			LangSetup lang = new LangSetup( instance );
-			l10n = lang.loadConfig();
-		}
-
-		return this.l10n.getString( path );
+		getServer().getScheduler().buildTask(this, () -> {
+			try {
+				check();
+			} catch ( Exception e ) {
+				instance.getLogger().warn( e.getMessage() );
+				e.printStackTrace();
+			}
+		})
+		.repeat(config.getLong("update_interval"), TimeUnit.SECONDS)
+		.schedule();
 	}
 
 	/**
@@ -160,25 +156,10 @@ public final class WooMinecraft extends JavaPlugin {
 		// foreach ORDERS in JSON feed
 		List<Integer> processedOrders = new ArrayList<>();
 		for ( Order order : orderList ) {
-			Player player = getServer().getPlayerExact( order.getPlayer() );
-			if ( null == player ) {
-				continue;
-			}
-
-			// World whitelisting.
-			if ( getConfig().isSet( "whitelist-worlds" ) ) {
-				List<String> whitelistWorlds = getConfig().getStringList( "whitelist-worlds" );
-				String playerWorld = player.getWorld().getName();
-				if ( ! whitelistWorlds.contains( playerWorld ) ) {
-					wmc_log( "Player " + player.getDisplayName() + " was in world " + playerWorld + " which is not in the white-list, no commands were ran." );
-					continue;
-				}
-			}
 
 			// Walk over all commands and run them at the next available tick.
 			for ( String command : order.getCommands() ) {
-				BukkitScheduler scheduler = Bukkit.getServer().getScheduler();
-				scheduler.scheduleSyncDelayedTask( instance, () -> Bukkit.getServer().dispatchCommand( Bukkit.getServer().getConsoleSender(), command ), 20L );
+				getServer().getCommandManager().executeAsync(getServer().getConsoleCommandSource(), command);
 			}
 
 			wmc_log( "Adding item to list - " + order.getOrderId() );
@@ -295,10 +276,10 @@ public final class WooMinecraft extends JavaPlugin {
 				this.getLogger().info( message );
 				break;
 			case 2:
-				this.getLogger().warning( message );
+				this.getLogger().warn( message );
 				break;
 			case 3:
-				this.getLogger().severe( message );
+				this.getLogger().error( message );
 				break;
 		}
 	}

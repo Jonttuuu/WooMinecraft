@@ -1,0 +1,10 @@
+{
+  "id": "woominecraft",
+  "name": "${project.name}",
+  "version": "${project.version}",
+  "description":"${project.description}",
+  "url": "http://woominecraft.com",
+  "authors": [ "JerryWood", "TekkitCommando", "Phillmac" ],
+  "dependencies": [],
+  "main": "${mainClass}"
+}
